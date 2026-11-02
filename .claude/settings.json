@@ -1,0 +1,9 @@
+{
+  "extraKnownMarketplaces": {
+    "claude-mods": { "source": { "source": "github", "repo": "timasb00/claude-mods" } }
+  },
+  "enabledPlugins": {
+    "equipe@claude-mods": true,
+    "model-router@claude-mods": true
+  }
+}
