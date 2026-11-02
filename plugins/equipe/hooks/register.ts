@@ -63,7 +63,7 @@ export const register: Register = on => {
   const S: State = { name: '', machine: '', io: undefined, off: false, lastSync: 0, pending: [], shown: [], problem: undefined }
 
   on('session.start', async ($, e, next) => {
-    S.machine = ((await $.env.get('COMPUTERNAME')) ?? (await $.env.get('HOSTNAME')) ?? 'machine') as string
+    S.machine = ((await $.env.get('COMPUTERNAME')) ?? (await $.env.get('HOSTNAME')) ?? 'cloud') as string
     S.name = `${S.machine.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`
     await $.command.register({ name: 'equipe', description: 'Sessions en équipe : status | tache <texte> | prends | fini <id> <résultat> | dis <session|tous> <texte> | lis | nom <nom> | depot <owner/repo> | off | on' })
     return next(e)
