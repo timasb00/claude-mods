@@ -1,0 +1,11 @@
+{
+  "name": "claude-mods",
+  "owner": { "name": "timasb00" },
+  "plugins": [
+    {
+      "name": "model-router",
+      "source": "./plugins/model-router",
+      "description": "Classe chaque demande et route le tour vers Haiku, Sonnet ou Opus"
+    }
+  ]
+}

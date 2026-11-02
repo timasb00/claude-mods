@@ -1,0 +1,1 @@
+{ "name": "model-router", "version": "0.1.0", "description": "Classe chaque demande et route le tour vers Haiku, Sonnet ou Opus" }
