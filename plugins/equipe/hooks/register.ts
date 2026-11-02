@@ -58,6 +58,67 @@ async function refresh($: any, S: State, force: boolean): Promise<void> {
   $.ui.status(S.pending.length ? `équipe : ${S.pending.length} message(s)` : `équipe : ${S.name}`)
 }
 
+// Une action d'équipe, partagée par la commande /equipe et l'outil que le modèle appelle.
+async function act($: any, S: State, args: string): Promise<string> {
+  const [cmd = 'status', ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  const text = rest.join(' ')
+  const a = cmd.toLowerCase()
+  if (a === 'off') { S.off = true; $.ui.status(undefined); return 'Mod équipe coupé pour cette session. /equipe on pour le rallumer.' }
+  if (a === 'on') { S.off = false; await refresh($, S, true); return `Mod équipe actif. Cette session s'appelle « ${S.name} ».` }
+  if (a === 'depot') {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(text)) return 'Usage : /equipe depot <owner/repo>'
+    await $.store.set('repo', text)
+    S.io = undefined
+    return `Tableau réglé sur ${text}. Il sera cloné au prochain usage (supprime ~/.claude/equipe-board si un autre dépôt y était déjà).`
+  }
+  if (a === 'nom') {
+    if (!text) return `Cette session s'appelle « ${S.name} ».`
+    S.name = text.replace(/\s+/g, '-').slice(0, 30)
+  }
+  if (S.off) return 'Mod équipe coupé (/equipe on).'
+  const i = await ensure($, S)
+  if (!i) return `Tableau injoignable : ${S.problem}\nCrée le dépôt privé ${DEFAULT_REPO} sur GitHub, et vérifie que git y a accès (connexion GitHub sur cette machine).`
+  const now = Date.now()
+
+  if (a === 'tache') {
+    if (!text) return 'Usage : /equipe tache <description>'
+    const id = await addTask(i, S.name, text, now)
+    return id ? `Tâche créée (${id}) : ${text}` : 'Échec : impossible de publier la tâche.'
+  }
+  if (a === 'prends') {
+    await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
+    const t = await claim(i, S.name, now)
+    if (!t) return 'Aucune tâche libre.'
+    await announce(i, { name: S.name, machine: S.machine, task: t.title, at: now })
+    return `Tâche prise (${t.id}) : ${t.title}\nQuand tu as fini : /equipe fini ${t.id} <résultat>`
+  }
+  if (a === 'fini') {
+    const [id, ...res] = rest
+    if (!id) return 'Usage : /equipe fini <id> <résultat>'
+    const ok = await finish(i, S.name, id, res.join(' ') || 'terminé')
+    if (ok) await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
+    return ok ? `Tâche ${id} marquée finie.` : `Impossible : la tâche ${id} n'existe pas ou n'est pas à ${S.name}.`
+  }
+  if (a === 'dis') {
+    const [to, ...msg] = rest
+    if (!to || !msg.length) return 'Usage : /equipe dis <session|tous> <texte>'
+    const ok = await send(i, S.name, to, msg.join(' '), now)
+    return ok ? `Message envoyé à ${to}.` : 'Échec de l’envoi.'
+  }
+  if (a === 'lis') {
+    await refresh($, S, true)
+    const got = S.pending
+    await $.store.set('seen', [...(await seenSet($)), ...got.map(m => m.file)].slice(-SEEN_KEEP))
+    S.pending = []
+    S.shown = []
+    $.ui.status(`équipe : ${S.name}`)
+    return got.length ? got.map(m => `de ${m.from} : ${m.text}`).join('\n') : 'Aucun nouveau message.'
+  }
+  await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
+  await sync(i)
+  return `Tu es « ${S.name} ».\n\n${summary(await sessions(i), await tasks(i), now)}`
+}
+
 export const register: Register = on => {
   // État du module : remis à zéro à chaque rechargement.
   const S: State = { name: '', machine: '', io: undefined, off: false, lastSync: 0, pending: [], shown: [], problem: undefined }
@@ -66,68 +127,19 @@ export const register: Register = on => {
     S.machine = ((await $.env.get('COMPUTERNAME')) ?? (await $.env.get('HOSTNAME')) ?? 'cloud') as string
     S.name = `${S.machine.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 14)}-${Math.random().toString(36).slice(2, 6)}`
     await $.command.register({ name: 'equipe', description: 'Sessions en équipe : status | tache <texte> | prends | fini <id> <résultat> | dis <session|tous> <texte> | lis | nom <nom> | depot <owner/repo> | off | on' })
+    await $.tool.register({
+      name: 'equipe',
+      description: "Tableau partagé entre les sessions Claude de l'utilisateur (ses PC et le cloud). À utiliser quand l'utilisateur parle d'équipe, de tâches à répartir, de messages aux autres sessions, ou tape /equipe. `commande` vaut, comme la commande /equipe : '' ou 'status' (qui fait quoi), 'tache <texte>' (créer une tâche libre), 'prends' (prendre la prochaine tâche libre), 'fini <id> <résultat>', 'dis <session|tous> <texte>', 'lis' (messages reçus), 'nom <nom>'.",
+      inputSchema: { type: 'object', properties: { commande: { type: 'string', description: "ex. 'prends', 'tache Écrire le README', 'dis tous bonjour'" } }, required: ['commande'] },
+      isDeferred: false,
+    })
     return next(e)
   })
 
-  on('command.run', { command: 'equipe' }, async ($, e) => {
-    const [cmd = 'status', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
-    const text = rest.join(' ')
-    const a = cmd.toLowerCase()
-    if (a === 'off') { S.off = true; $.ui.status(undefined); return { text: 'Mod équipe coupé pour cette session. /equipe on pour le rallumer.' } }
-    if (a === 'on') { S.off = false; await refresh($, S, true); return { text: `Mod équipe actif. Cette session s'appelle « ${S.name} ».` } }
-    if (a === 'depot') {
-      if (!/^[\w.-]+\/[\w.-]+$/.test(text)) return { text: 'Usage : /equipe depot <owner/repo>' }
-      await $.store.set('repo', text)
-      S.io = undefined
-      return { text: `Tableau réglé sur ${text}. Il sera cloné au prochain usage (supprime ~/.claude/equipe-board si un autre dépôt y était déjà).` }
-    }
-    if (a === 'nom') {
-      if (!text) return { text: `Cette session s'appelle « ${S.name} ».` }
-      S.name = text.replace(/\s+/g, '-').slice(0, 30)
-    }
-    if (S.off) return { text: 'Mod équipe coupé (/equipe on).' }
-    const i = await ensure($, S)
-    if (!i) return { text: `Tableau injoignable : ${S.problem}\nCrée le dépôt privé ${DEFAULT_REPO} sur GitHub, et vérifie que git y a accès (connexion GitHub sur cette machine).` }
-    const now = Date.now()
+  on('command.run', { command: 'equipe' }, async ($, e) => ({ text: await act($, S, e.args) }))
 
-    if (a === 'tache') {
-      if (!text) return { text: 'Usage : /equipe tache <description>' }
-      const id = await addTask(i, S.name, text, now)
-      return { text: id ? `Tâche créée (${id}) : ${text}` : 'Échec : impossible de publier la tâche.' }
-    }
-    if (a === 'prends') {
-      await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
-      const t = await claim(i, S.name, now)
-      if (!t) return { text: 'Aucune tâche libre.' }
-      await announce(i, { name: S.name, machine: S.machine, task: t.title, at: now })
-      return { text: `Tâche prise (${t.id}) : ${t.title}\nQuand tu as fini : /equipe fini ${t.id} <résultat>` }
-    }
-    if (a === 'fini') {
-      const [id, ...res] = rest
-      if (!id) return { text: 'Usage : /equipe fini <id> <résultat>' }
-      const ok = await finish(i, S.name, id, res.join(' ') || 'terminé')
-      if (ok) await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
-      return { text: ok ? `Tâche ${id} marquée finie.` : `Impossible : la tâche ${id} n'existe pas ou n'est pas à ${S.name}.` }
-    }
-    if (a === 'dis') {
-      const [to, ...msg] = rest
-      if (!to || !msg.length) return { text: 'Usage : /equipe dis <session|tous> <texte>' }
-      const ok = await send(i, S.name, to, msg.join(' '), now)
-      return { text: ok ? `Message envoyé à ${to}.` : 'Échec de l’envoi.' }
-    }
-    if (a === 'lis') {
-      await refresh($, S, true)
-      const got = S.pending
-      await $.store.set('seen', [...(await seenSet($)), ...got.map(m => m.file)].slice(-SEEN_KEEP))
-      S.pending = []
-      S.shown = []
-      $.ui.status(`équipe : ${S.name}`)
-      return { text: got.length ? got.map(m => `de ${m.from} : ${m.text}`).join('\n') : 'Aucun nouveau message.' }
-    }
-    await announce(i, { name: S.name, machine: S.machine, task: '', at: now })
-    await sync(i)
-    return { text: `Tu es « ${S.name} ».\n\n${summary(await sessions(i), await tasks(i), now)}` }
-  })
+  // Depuis l'app ou un fil de projet, les commandes / ne s'exécutent pas : le modèle passe par cet outil.
+  on('tool.call', { tool: 'mcp__equipe__equipe' }, async ($, e) => ({ result: await act($, S, String((e as any).commande ?? '')) }))
 
   // Au début de chaque tour de la boucle principale : resynchronise (au plus toutes les 2 min).
   on('turn.start', async ($, e, next) => {
