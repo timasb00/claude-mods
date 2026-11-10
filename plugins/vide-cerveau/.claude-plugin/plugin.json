@@ -1,0 +1,6 @@
+{
+  "name": "vide-cerveau",
+  "version": "0.1.0",
+  "description": "Transforme une dictée libre (vide-cerveau) en document clair : thèmes, décisions, actions, questions ouvertes, sauvegardé pour Claude",
+  "license": "MIT"
+}
