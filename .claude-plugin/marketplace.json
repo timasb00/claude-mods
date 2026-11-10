@@ -13,6 +13,11 @@
       "name": "equipe",
       "source": "./plugins/equipe",
       "description": "Les sessions Claude Code se parlent et se répartissent les tâches via un tableau git partagé"
+    },
+    {
+      "name": "vide-cerveau",
+      "source": "./plugins/vide-cerveau",
+      "description": "Transforme une dictée libre en document structuré (décisions, actions, questions, idées) sauvegardé pour Claude"
     }
   ]
 }
